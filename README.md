@@ -142,8 +142,9 @@ uptime_ms,address,group,channel,value,status
 Después de `# SCAN_END`, tanto `m` como `r` muestran una tabla con los valores
 originales de esa ronda, sin redondeo ni conversión de unidades. La tabla está en
 inglés y solo incluye los canales identificados (1–16). Todas sus líneas
-empiezan por `#`, por lo que el registrador conserva el CSV actual y guarda la
-tabla en el `.log`. Ejemplo de algunas filas con tu tercera medición:
+empiezan por `#`. El registrador copia sus filas al CSV con los mismos nombres,
+valores y unidades, y conserva toda la salida en el `.log`. Ejemplo de algunas
+filas con tu tercera medición:
 
 ```text
 # Ch | Parameter                      | Value      | Unit
@@ -181,7 +182,7 @@ los canales 2 y 5: `1 000 000 / 707.20 ≈ 1414.0 ohm·cm`.
 
 En el monitor se usa ASCII: `degC` = °C, `uS/cm` = µS/cm, `ohm*cm` = ohm·cm
 y `g/cm3` = g/cm³. Un centinela `−99999` aparece como `NO_SENSOR` en la tabla;
-se conserva el valor original y `MISSING_SENSOR` en la fila CSV. El valor positivo
+se conserva el valor original y `MISSING_SENSOR` en el `.log`. El valor positivo
 `+99999` se conserva tal cual: no es el centinela de ausencia documentado.
 
 Solo se muestra la tabla si la ronda termina correctamente y contiene los
@@ -193,7 +194,7 @@ las unidades o la lista SDI-12, revisa las etiquetas en `printSummary()`.
 
 Para investigación, verifica canal → parámetro → unidad con VuSitu/Win-Situ o
 mediante Modbus y la configuración real. Los canales 17–20 siguen en las filas
-crudas de lectura, pero se omiten de la tabla hasta identificar su correspondencia.
+crudas del `.log`, pero se omiten de la tabla y del CSV hasta identificarlos.
 
 La 500 admite cuatro sensores intercambiables, además de opciones internas según
 el modelo; no todos los tipos comercializados caben simultáneamente. Un sensor
@@ -226,29 +227,70 @@ python registrar.py --list
 En Windows, usa `py -m venv .venv` y `.venv\Scripts\activate` para los dos
 primeros pasos. Los comandos siguientes funcionan igual.
 
-Usa el puerto que aparezca en tu ordenador, por ejemplo:
+Usa el puerto USB que aparezca en tu ordenador. Para iniciar una ronda cada
+**10 minutos** (600 segundos), por ejemplo:
 
 ```sh
-python registrar.py --port /dev/cu.usbserial-XXXX --output experimento_01.csv
+python registrar.py --port /dev/cu.usbserial-XXXX --interval 600 --output experimento_01.csv
 ```
 
 En Windows, el puerto suele tener un nombre como `COM5`:
 
 ```sh
-python registrar.py --port COM5 --output experimento_01.csv
+python registrar.py --port COM5 --interval 600 --output experimento_01.csv
 ```
 
-Abrir el puerto suele reiniciar el Nano. El registrador espera 15 s, consulta el
-estado y activa `r`. **No ejecuta `a`**: prepara la lista de canales previamente
-en el monitor serie si hace falta. Verás las lecturas en pantalla.
+Abrir el puerto suele reiniciar el Nano. El registrador espera unos 15–20 s,
+envía `s` y espera su confirmación para cancelar una repetición anterior. Consulta
+el estado y envía `m` para cada ronda. La primera empieza al terminar esa
+preparación; las siguientes se solicitan cada 600 segundos, aproximadamente de
+inicio a inicio. El intervalo predeterminado también es 600 s. Cambia
+`--interval` para elegir otro, sin volver a cargar el Nano. No se solapan rondas:
+si una tarda más que el intervalo, la siguiente empieza cuando termina.
+
+Este intervalo lo controla el ordenador; el comando manual `r` del Nano mantiene
+su pausa de 60 s tras cada ronda. **No se ejecuta `a`** ni se cambian sensores,
+calibraciones o unidades. Verás las lecturas y las tablas en pantalla.
 
 Se guardan dos archivos, sin sobrescribir experimentos anteriores:
 
-- `experimento_01.csv`: valores recibidos, estado y hora UTC de recepción del PC.
-- `experimento_01.csv.log`: toda la salida, incluidos identificación y errores.
+- `experimento_01.csv`: la tabla legible en inglés, con columnas `Ch`, `Parameter`,
+  `Value`, `Unit` y `Date/time (Europe/Brussels)`. Son 16 filas por ronda, una por
+  parámetro identificado, conservando signos y decimales. `NO_SENSOR` significa
+  dato ausente. La fecha y hora local corresponden a la recepción de `SCAN_BEGIN`;
+  no implica que todos los parámetros se midieran simultáneamente.
+- `experimento_01.csv.log`: toda la salida original con fecha y hora UTC de
+  recepción de cada línea: los 20 canales crudos, tablas, identificación y errores.
 
-Termina con **Ctrl+C**. Los archivos se actualizan después de cada línea.
-La fecha del PC es la **hora de recepción**, no la hora exacta de adquisición.
+Las filas del CSV se copian de la tabla que ya emite el Nano; no se mantiene
+otro mapa de nombres y unidades en Python. Si no aparece tabla, por ejemplo por
+`SCAN_FAILED` o `TABLE_SKIPPED`, las lecturas recibidas se conservan en el log y
+no se presentan como una ronda completa en el CSV. El formato antiguo de CSV
+con `uptime_ms,address,group,channel,value,status` ya no se utiliza para archivos
+nuevos. Si el registrador estaba abierto al actualizarlo, ciérralo con Ctrl+C
+y vuelve a arrancarlo para aplicar el formato nuevo.
+
+Si omites `--output`, se genera un nombre con fecha y hora automáticamente.
+Termina con **Ctrl+C**, preferiblemente después de `# TABLE_END` para conservar
+completa la última ronda. Se envía `s` antes de cerrar. Los archivos se actualizan
+después de cada línea y se sincronizan con disco al terminar una ronda o cerrar
+el programa. Si el Nano se reinicia y vuelve a emitir su cabecera, se repite la
+preparación y se reanuda el registro. Si el USB se desconecta, el programa termina
+con un error: reconecta y vuelve a arrancarlo con un archivo nuevo. Si no llega
+la confirmación inicial en 90 s o una ronda no termina en 180 s, se detiene con
+un mensaje, conservando lo recibido.
+
+**Mantén la tapa abierta y evita la suspensión del portátil.** En macOS puedes
+impedir la suspensión por inactividad durante el registro con:
+
+```sh
+caffeinate -i python registrar.py --port /dev/cu.usbserial-XXXX --interval 600
+```
+
+La fuente externa de la sonda también debe permanecer alimentada. Consulta
+[la guía para el lago](LAGO.md) para los pasos de esta salida.
+
+Las fechas del PC son **horas de recepción**, no horas exactas de adquisición.
 Los grupos se miden en secuencia; no los trates como una muestra simultánea.
 Sin el ordenador y el registrador activos, este montaje no conserva datos.
 
@@ -299,6 +341,7 @@ c++ -std=c++11 -Wall -Wextra -pedantic tests/check_protocol.cpp -o /tmp/aquatrol
 /tmp/aquatroll-check
 c++ -std=c++11 -Wall -Wextra -pedantic -Itests/stubs tests/check_summary.cpp -o /tmp/aquatroll-summary
 /tmp/aquatroll-summary
+python3 tests/check_registrar.py
 arduino-cli compile --fqbn arduino:avr:nano:cpu=atmega328old AquaTroll500
 ```
 
@@ -308,6 +351,11 @@ original, comandos `m`/`r`, sensor ausente, limpieza entre rondas, otra cantidad
 de canales y fallo de un grupo posterior. Los sustitutos de Arduino/SDI12 solo
 se usan en el ordenador; no simulan CRC ni temporización eléctrica. La
 compilación y las pruebas no sustituyen cargar la nueva versión en el Nano.
+
+La prueba del registrador usa un Nano simulado y archivos reales temporales:
+intervalos de 10 minutos sin esperar ese tiempo real, CSV y log, ronda parcial,
+reinicio, prevención de solapamientos, límite de espera y parada al salir. No
+comprueba la conexión USB ni la alimentación del montaje de campo.
 
 Los ajustes de pin, pausa entre rondas y pulso de activación están al principio
 del sketch. No añadas otras bibliotecas que usen las mismas interrupciones o
